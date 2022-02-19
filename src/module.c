@@ -265,7 +265,7 @@ typedef struct RedisModuleBlockedClient {
                                      Used for measuring latency of blocking cmds */
 } RedisModuleBlockedClient;
 
-#define BLOCKED_CLIENTS_QUEUES 2
+#define BLOCKED_CLIENTS_QUEUES 4
 
 static size_t moduleUnblockClientQueueIdx = 0;
 static pthread_mutex_t moduleUnblockedClientsMutex[BLOCKED_CLIENTS_QUEUES];
@@ -6463,16 +6463,18 @@ void RM_SignalKeyAsReady(RedisModuleCtx *ctx, RedisModuleString *key) {
 int moduleUnblockClientByHandle(RedisModuleBlockedClient *bc, void *privdata) {
     int idx = moduleUnblockClientQueueIdx++;
     int i = idx % BLOCKED_CLIENTS_QUEUES;
+    int trigger = 0;
     pthread_mutex_lock(&moduleUnblockedClientsMutex[i]);
     if (!bc->blocked_on_keys) bc->privdata = privdata;
     bc->unblocked = 1;
-    if (listLength(moduleUnblockedClients[i]) == 0) {
+    if (listLength(moduleUnblockedClients[i]) == 0) trigger = 1;
+    listAddNodeTail(moduleUnblockedClients[i],bc);
+    pthread_mutex_unlock(&moduleUnblockedClientsMutex[i]);
+    if (trigger == 1) {
         if (write(server.module_pipe[1],"A",1) != 1) {
             /* Ignore the error, this is best-effort. */
         }
     }
-    listAddNodeTail(moduleUnblockedClients[i],bc);
-    pthread_mutex_unlock(&moduleUnblockedClientsMutex[i]);
     return REDISMODULE_OK;
 }
 
